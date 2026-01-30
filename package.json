@@ -1,0 +1,39 @@
+{
+  "name": "fate-bot",
+  "version": "1.0.0",
+  "description": "Telegram bot - Magic 8 Ball predictions",
+  "main": "dist/index.js",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "prod": "npm run build && npm start",
+    "pm2:start": "pm2 start ecosystem.config.js",
+    "pm2:stop": "pm2 stop fate-bot",
+    "pm2:restart": "pm2 restart fate-bot",
+    "pm2:logs": "pm2 logs fate-bot",
+    "pm2:status": "pm2 status",
+    "pm2:monit": "pm2 monit"
+  },
+  "keywords": [
+    "telegram",
+    "bot",
+    "predictions",
+    "magic-8-ball"
+  ],
+  "author": "Your Name",
+  "license": "MIT",
+  "dependencies": {
+    "dotenv": "^16.3.1",
+    "telegraf": "^4.16.3"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.5",
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.3"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
