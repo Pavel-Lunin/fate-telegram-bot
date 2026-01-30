@@ -9,7 +9,6 @@ npm-debug.log*
 
 # Build output
 dist/
-*.js
 *.js.map
 
 # Logs
