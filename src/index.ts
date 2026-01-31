@@ -19,7 +19,7 @@ import {
   startText,
   SWEAR_RESPONSE,
   SWEAR_TRIGGERS,
-} from "./constants";
+} from "./constants.js";
 
 // Загружаем .env
 dotenv.config();
