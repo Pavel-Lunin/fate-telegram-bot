@@ -109,7 +109,10 @@ bot.on(message("text"), async (ctx: Context) => {
   );
 
   if (hasSwearWord) {
-    await ctx.reply(SWEAR_RESPONSE, {
+    const swearResponse =
+      SWEAR_RESPONSE[Math.floor(Math.random() * SWEAR_RESPONSE.length)];
+
+    await ctx.reply(swearResponse, {
       reply_parameters: { message_id: ctx.message.message_id },
       parse_mode: "HTML" as const,
     });
@@ -257,7 +260,9 @@ bot.command("denis", (ctx) => {
 
 // Команда /swear для теста мата
 bot.command("swear", (ctx) => {
-  ctx.reply(SWEAR_RESPONSE);
+  const swearResponse =
+    SWEAR_RESPONSE[Math.floor(Math.random() * SWEAR_RESPONSE.length)];
+  ctx.reply(swearResponse);
 });
 
 // Команда /slang для теста сленга
