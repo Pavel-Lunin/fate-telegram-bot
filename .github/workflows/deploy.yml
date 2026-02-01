@@ -80,11 +80,15 @@ jobs:
         with:
           name: build-output
           # Что сохраняем:
+          # dist/                    Собранный JavaScript код
+          # package.json            Конфигурация зависимостей
+          # package-lock.json       Версии зависимостей
+          # ecosystem.config.json # Конфигурация PM2
           path: |
-            dist/           # Собранный JavaScript код
-            package.json    # Конфигурация зависимостей
-            package-lock.json # Версии зависимостей
-            ecosystem.config.json # Конфигурация PM2
+            dist/
+            package.json
+            package-lock.json
+            ecosystem.config.json
           # Храним артефакты 7 дней
           retention-days: 7
 
