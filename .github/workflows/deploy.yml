@@ -95,6 +95,7 @@ jobs:
           SERVER_HOST="${{ secrets.SERVER_HOST }}"
           SERVER_USER="${{ secrets.SERVER_USER }}"
           DEPLOY_PATH="${{ secrets.DEPLOY_PATH }}"
+          ADMIN_ID="${{ secrets.ADMIN_ID }}"
 
           # Команда для инициализации окружения (с nvm)
           INIT_CMD='export NVM_DIR="/home/devops/.nvm" && [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh" && nvm use 24.13.0'
@@ -131,7 +132,7 @@ jobs:
           # 4. Обновляем .env файл (добавьте ваш ADMIN_ID)
           echo "⚙️ Updating .env file..."
           ssh -o StrictHostKeyChecking=no $SERVER_USER@$SERVER_HOST \
-            "cd $DEPLOY_PATH && echo 'TELEGRAM_BOT_TOKEN=$BOT_TOKEN' > .env && echo 'ADMIN_ID=ваш_id' >> .env"
+            "cd $DEPLOY_PATH && echo 'BOT_TOKEN=$BOT_TOKEN' > .env && echo 'ADMIN_ID=$ADMIN_ID' >> .env"
 
           # 5. Устанавливаем зависимости
           echo "📦 Installing dependencies..."
