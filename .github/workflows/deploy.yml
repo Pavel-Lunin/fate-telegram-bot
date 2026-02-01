@@ -16,7 +16,7 @@ defaults:
     working-directory: ./
 
 env:
-  NODE_VERSION: "20"
+  NODE_VERSION: "24"
   DIST_FOLDER: "dist"
 
 jobs:

@@ -19,6 +19,10 @@ import {
   startText,
   SWEAR_RESPONSE,
   SWEAR_TRIGGERS,
+  ART_ROBOT_TRIGGERS,
+  ART_ROBOT_RESPONSES,
+  BOT_SKILLS_TRIGGERS,
+  BOT_SKILLS_RESPONSES,
 } from "./constants.js";
 
 // Загружаем .env
@@ -102,6 +106,42 @@ bot.on(message("text"), async (ctx: Context) => {
   }
 
   const messageLower = cleanMessage;
+
+  // ===== ВОПРОСЫ О ВОЗМОЖНОСТЯХ БОТА (высокий приоритет) =====
+  const hasBotSkillsTrigger = BOT_SKILLS_TRIGGERS.some((trigger: string) =>
+    messageLower.includes(trigger),
+  );
+
+  if (hasBotSkillsTrigger) {
+    const botSkillsResponse =
+      BOT_SKILLS_RESPONSES[
+        Math.floor(Math.random() * BOT_SKILLS_RESPONSES.length)
+      ];
+
+    await ctx.reply(botSkillsResponse, {
+      reply_parameters: { message_id: ctx.message.message_id },
+      parse_mode: "HTML" as const,
+    });
+    return;
+  }
+
+  // ===== РОБОТЫ/ИСКУССТВО/ИСКУССТВЕННЫЙ ИНТЕЛЛЕКТ =====
+  const hasArtRobotTrigger = ART_ROBOT_TRIGGERS.some((trigger) =>
+    messageLower.includes(trigger),
+  );
+
+  if (hasArtRobotTrigger) {
+    const artRobotResponse =
+      ART_ROBOT_RESPONSES[
+        Math.floor(Math.random() * ART_ROBOT_RESPONSES.length)
+      ];
+
+    await ctx.reply(artRobotResponse, {
+      reply_parameters: { message_id: ctx.message.message_id },
+      parse_mode: "HTML" as const,
+    });
+    return;
+  }
 
   // ===== МАТЕРНЫЕ СЛОВА (высокий приоритет) =====
   const hasSwearWord = SWEAR_TRIGGERS.some((swear) =>
@@ -270,6 +310,22 @@ bot.command("slang", (ctx) => {
   const internetResponse =
     INTERNET_RESPONSES[Math.floor(Math.random() * INTERNET_RESPONSES.length)];
   ctx.reply(internetResponse);
+});
+
+// Команда для теста триггеров роботов/искусства
+bot.command("robot", (ctx) => {
+  const artRobotResponse =
+    ART_ROBOT_RESPONSES[Math.floor(Math.random() * ART_ROBOT_RESPONSES.length)];
+  ctx.reply(artRobotResponse);
+});
+
+// Новая команда для теста вопросов о возможностях
+bot.command("skills", (ctx) => {
+  const botSkillsResponse =
+    BOT_SKILLS_RESPONSES[
+      Math.floor(Math.random() * BOT_SKILLS_RESPONSES.length)
+    ];
+  ctx.reply(botSkillsResponse);
 });
 
 // === ЗАПУСК БОТА ===

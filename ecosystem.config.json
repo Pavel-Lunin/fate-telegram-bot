@@ -6,8 +6,16 @@
       "instances": 1,
       "exec_mode": "fork",
       "autorestart": true,
-      "watch": true,
-      "ignore_watch": ["node_modules", "logs", ".git"],
+      "watch": false,
+      "ignore_watch": [
+        "node_modules",
+        "logs",
+        ".git",
+        ".env",
+        "*.tmp",
+        "*.pid",
+        "dist_backup_*"
+      ],
       "max_memory_restart": "150M",
       "kill_timeout": 5000,
       "error_file": "./logs/error.log",
