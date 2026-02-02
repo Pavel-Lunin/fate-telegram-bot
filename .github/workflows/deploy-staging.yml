@@ -1,0 +1,163 @@
+name: Deploy Staging Bot
+
+on:
+  push:
+    branches:
+      - develop
+  pull_request:
+    branches:
+      - develop
+    types: [closed]
+
+jobs:
+  build:
+    name: "Build and Test"
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: TypeScript compilation check
+        run: npx tsc --noEmit
+
+      - name: Build project
+        run: npm run build
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-output
+          path: |
+            dist/
+            package.json
+            package-lock.json
+            ecosystem.config.json
+          retention-days: 7
+          if-no-files-found: error
+
+  deploy-staging:
+    name: "Deploy Staging Bot"
+    needs: build
+    runs-on: ubuntu-latest
+    environment: staging
+
+    if: |
+      (github.ref == 'refs/heads/develop' && github.event_name == 'push') ||
+      (github.event.pull_request.merged == true && github.event.action == 'closed')
+
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: build-output
+
+      - name: Setup SSH
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SERVER_SSH_PRIVATE_KEY }}
+
+      - name: Add server to known hosts
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -H ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Deploy Staging Bot
+        env:
+          BOT_NAME: "fate-bot-staging"
+          ENVIRONMENT: "staging"
+          ENV_FILE: ".env.staging"
+          BOT_TOKEN: ${{ secrets.STAGING_BOT_TOKEN }}
+          ADMIN_ID: ${{ secrets.ADMIN_ID }}
+        run: |
+          echo "🚀 Starting STAGING bot deployment..."
+
+          SERVER_HOST="${{ secrets.SERVER_HOST }}"
+          SERVER_USER="${{ secrets.SERVER_USER }}"
+          DEPLOY_PATH="${{ secrets.DEPLOY_PATH }}"
+
+          # Команда для инициализации окружения (с nvm)
+          INIT_CMD='export NVM_DIR="/home/devops/.nvm" && [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh" && nvm use 24.13.0'
+
+          # Функция для выполнения команд с nvm
+          ssh_with_nvm() {
+            local cmd="$1"
+            ssh -o StrictHostKeyChecking=no $SERVER_USER@$SERVER_HOST "$INIT_CMD && $cmd"
+          }
+
+          # 1. Останавливаем staging бота
+          echo "⏸️ Stopping $BOT_NAME..."
+          ssh_with_nvm "pm2 stop $BOT_NAME 2>/dev/null || true"
+          sleep 2
+
+          # 2. Удаляем staging бота из PM2
+          echo "🗑️ Removing $BOT_NAME from PM2..."
+          ssh_with_nvm "pm2 delete $BOT_NAME 2>/dev/null || true"
+
+          # 3. Копируем файлы
+          echo "📤 Copying files..."
+
+          # Создаем папки если нет
+          ssh -o StrictHostKeyChecking=no $SERVER_USER@$SERVER_HOST \
+            "mkdir -p $DEPLOY_PATH/dist $DEPLOY_PATH/logs"
+
+          # Копируем файлы
+          scp -o StrictHostKeyChecking=no -r ./dist/* \
+            $SERVER_USER@$SERVER_HOST:$DEPLOY_PATH/dist/
+
+          scp -o StrictHostKeyChecking=no package.json package-lock.json ecosystem.config.json \
+            $SERVER_USER@$SERVER_HOST:$DEPLOY_PATH/
+
+          # 4. Создаем .env.staging файл
+          echo "⚙️ Creating $ENV_FILE file..."
+          ssh -o StrictHostKeyChecking=no $SERVER_USER@$SERVER_HOST \
+            "cd $DEPLOY_PATH && echo 'BOT_TOKEN=$BOT_TOKEN' > $ENV_FILE && echo 'ADMIN_ID=$ADMIN_ID' >> $ENV_FILE"
+
+          # 5. Устанавливаем зависимости
+          echo "📦 Installing dependencies..."
+          ssh_with_nvm "cd $DEPLOY_PATH && npm ci --only=production"
+
+          # 6. Запускаем staging бота
+          echo "🚀 Starting $BOT_NAME..."
+          ssh_with_nvm "cd $DEPLOY_PATH && pm2 start ecosystem.config.json --env $ENVIRONMENT --only $BOT_NAME"
+
+          # 7. Сохраняем PM2 конфигурацию
+          echo "💾 Saving PM2 config..."
+          ssh_with_nvm "pm2 save"
+
+          echo "✅ Staging bot deployment completed!"
+
+      - name: Verify deployment
+        run: |
+          echo "🔍 Verifying staging deployment..."
+
+          SERVER_HOST="${{ secrets.SERVER_HOST }}"
+          SERVER_USER="${{ secrets.SERVER_USER }}"
+
+          INIT_CMD='export NVM_DIR="/home/devops/.nvm" && [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh" && nvm use 24.13.0'
+
+          # Проверяем статус всех ботов
+          echo "📊 PM2 Status (all bots):"
+          ssh -o StrictHostKeyChecking=no $SERVER_USER@$SERVER_HOST \
+            "$INIT_CMD && pm2 status"
+
+          echo ""
+          echo "📋 Staging bot details:"
+          ssh -o StrictHostKeyChecking=no $SERVER_USER@$SERVER_HOST \
+            "$INIT_CMD && pm2 show fate-bot-staging"
+
+          echo ""
+          echo "📜 Staging bot logs (last 5 lines):"
+          ssh -o StrictHostKeyChecking=no $SERVER_USER@$SERVER_HOST \
+            "$INIT_CMD && pm2 logs fate-bot-staging --lines 5 --nostream"

@@ -1,7 +1,7 @@
 {
   "apps": [
     {
-      "name": "fate-bot",
+      "name": "fate-bot-staging",
       "script": "dist/index.js",
       "instances": 1,
       "exec_mode": "fork",
@@ -11,21 +11,54 @@
         "node_modules",
         "logs",
         ".git",
-        ".env",
+        ".env*",
         "*.tmp",
         "*.pid",
         "dist_backup_*"
       ],
       "max_memory_restart": "150M",
       "kill_timeout": 5000,
-      "error_file": "./logs/error.log",
-      "out_file": "./logs/out.log",
-      "log_file": "./logs/combined.log",
+      "error_file": "./logs/staging-error.log",
+      "out_file": "./logs/staging-out.log",
+      "log_file": "./logs/staging-combined.log",
       "log_date_format": "YYYY-MM-DD HH:mm:ss",
       "time": true,
       "env": {
-        "NODE_ENV": "development",
-        "DEBUG": "bot:*"
+        "NODE_ENV": "development"
+      },
+      "env_staging": {
+        "NODE_ENV": "staging"
+      },
+      "node_args": "--trace-warnings",
+      "max_restarts": 10,
+      "min_uptime": "10s"
+    },
+
+    {
+      "name": "fate-bot-production",
+      "script": "dist/index.js",
+      "instances": 1,
+      "exec_mode": "fork",
+      "autorestart": true,
+      "watch": false,
+      "ignore_watch": [
+        "node_modules",
+        "logs",
+        ".git",
+        ".env*",
+        "*.tmp",
+        "*.pid",
+        "dist_backup_*"
+      ],
+      "max_memory_restart": "150M",
+      "kill_timeout": 5000,
+      "error_file": "./logs/production-error.log",
+      "out_file": "./logs/production-out.log",
+      "log_file": "./logs/production-combined.log",
+      "log_date_format": "YYYY-MM-DD HH:mm:ss",
+      "time": true,
+      "env": {
+        "NODE_ENV": "development"
       },
       "env_production": {
         "NODE_ENV": "production"

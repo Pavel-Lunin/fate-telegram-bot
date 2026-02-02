@@ -1,23 +1,13 @@
-name: Deploy Telegram Bot
+name: Deploy Production Bot
 
 on:
   push:
     branches:
       - main
-      - develop
   pull_request:
     branches:
       - main
-      - develop
-
-defaults:
-  run:
-    shell: bash
-    working-directory: ./
-
-env:
-  NODE_VERSION: "24"
-  DIST_FOLDER: "dist"
+    types: [closed]
 
 jobs:
   build:
@@ -33,7 +23,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: ${{ env.NODE_VERSION }}
+          node-version: "24"
           cache: "npm"
 
       - name: Install dependencies
@@ -57,17 +47,15 @@ jobs:
           retention-days: 7
           if-no-files-found: error
 
-  deploy:
-    name: "Deploy to Server"
+  deploy-production:
+    name: "Deploy Production Bot"
     needs: build
     runs-on: ubuntu-latest
+    environment: production
 
     if: |
-      (github.ref == 'refs/heads/develop' && github.event_name == 'push') ||
-      (github.ref == 'refs/heads/main' && github.event_name == 'push')
-
-    environment:
-      name: ${{ github.ref == 'refs/heads/develop' && 'staging' || 'production' }}
+      (github.ref == 'refs/heads/main' && github.event_name == 'push') ||
+      (github.event.pull_request.merged == true && github.event.action == 'closed')
 
     steps:
       - name: Download build artifacts
@@ -85,17 +73,19 @@ jobs:
           mkdir -p ~/.ssh
           ssh-keyscan -H ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts
 
-      - name: Deploy to server
+      - name: Deploy Production Bot
         env:
-          BOT_TOKEN: ${{ github.ref == 'refs/heads/develop' && secrets.STAGING_BOT_TOKEN || secrets.PRODUCTION_BOT_TOKEN }}
-          ENVIRONMENT: ${{ github.ref == 'refs/heads/develop' && 'staging' || 'production' }}
+          BOT_NAME: "fate-bot-production"
+          ENVIRONMENT: "production"
+          ENV_FILE: ".env.production"
+          BOT_TOKEN: ${{ secrets.PRODUCTION_BOT_TOKEN }}
+          ADMIN_ID: ${{ secrets.ADMIN_ID }}
         run: |
-          echo "🚀 Starting deployment to $ENVIRONMENT"
+          echo "🚀 Starting PRODUCTION bot deployment..."
 
           SERVER_HOST="${{ secrets.SERVER_HOST }}"
           SERVER_USER="${{ secrets.SERVER_USER }}"
           DEPLOY_PATH="${{ secrets.DEPLOY_PATH }}"
-          ADMIN_ID="${{ secrets.ADMIN_ID }}"
 
           # Команда для инициализации окружения (с nvm)
           INIT_CMD='export NVM_DIR="/home/devops/.nvm" && [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh" && nvm use 24.13.0'
@@ -106,21 +96,21 @@ jobs:
             ssh -o StrictHostKeyChecking=no $SERVER_USER@$SERVER_HOST "$INIT_CMD && $cmd"
           }
 
-          # 1. Останавливаем бота
-          echo "⏸️ Stopping bot..."
-          ssh_with_nvm "cd $DEPLOY_PATH && pm2 stop fate-bot 2>/dev/null || true"
+          # 1. Останавливаем production бота
+          echo "⏸️ Stopping $BOT_NAME..."
+          ssh_with_nvm "pm2 stop $BOT_NAME 2>/dev/null || true"
+          sleep 2
 
-          # 2. Создаем бэкап
-          echo "💾 Creating backup..."
-          BACKUP_TIME=$(date +%Y%m%d_%H%M%S)
-          ssh_with_nvm "cd $DEPLOY_PATH && [ -d dist ] && cp -r dist dist_backup_$BACKUP_TIME || true"
+          # 2. Удаляем production бота из PM2
+          echo "🗑️ Removing $BOT_NAME from PM2..."
+          ssh_with_nvm "pm2 delete $BOT_NAME 2>/dev/null || true"
 
           # 3. Копируем файлы
           echo "📤 Copying files..."
 
-          # Создаем папку dist если нет
+          # Создаем папки если нет
           ssh -o StrictHostKeyChecking=no $SERVER_USER@$SERVER_HOST \
-            "mkdir -p $DEPLOY_PATH/dist"
+            "mkdir -p $DEPLOY_PATH/dist $DEPLOY_PATH/logs"
 
           # Копируем файлы
           scp -o StrictHostKeyChecking=no -r ./dist/* \
@@ -129,36 +119,45 @@ jobs:
           scp -o StrictHostKeyChecking=no package.json package-lock.json ecosystem.config.json \
             $SERVER_USER@$SERVER_HOST:$DEPLOY_PATH/
 
-          # 4. Обновляем .env файл (добавьте ваш ADMIN_ID)
-          echo "⚙️ Updating .env file..."
+          # 4. Создаем .env.production файл
+          echo "⚙️ Creating $ENV_FILE file..."
           ssh -o StrictHostKeyChecking=no $SERVER_USER@$SERVER_HOST \
-            "cd $DEPLOY_PATH && echo 'BOT_TOKEN=$BOT_TOKEN' > .env && echo 'ADMIN_ID=$ADMIN_ID' >> .env"
+            "cd $DEPLOY_PATH && echo 'BOT_TOKEN=$BOT_TOKEN' > $ENV_FILE && echo 'ADMIN_ID=$ADMIN_ID' >> $ENV_FILE"
 
           # 5. Устанавливаем зависимости
           echo "📦 Installing dependencies..."
           ssh_with_nvm "cd $DEPLOY_PATH && npm ci --only=production"
 
-          # 6. Запускаем бота
-          echo "🚀 Starting bot..."
-          ssh_with_nvm "cd $DEPLOY_PATH && pm2 start ecosystem.config.json --env $ENVIRONMENT"
+          # 6. Запускаем production бота
+          echo "🚀 Starting $BOT_NAME..."
+          ssh_with_nvm "cd $DEPLOY_PATH && pm2 start ecosystem.config.json --env $ENVIRONMENT --only $BOT_NAME"
 
-          # 7. Сохраняем PM2
+          # 7. Сохраняем PM2 конфигурацию
           echo "💾 Saving PM2 config..."
-          ssh_with_nvm "cd $DEPLOY_PATH && pm2 save"
+          ssh_with_nvm "pm2 save"
 
-          echo "✅ Deployment completed!"
+          echo "✅ Production bot deployment completed!"
 
       - name: Verify deployment
         run: |
-          echo "🔍 Verifying deployment..."
+          echo "🔍 Verifying production deployment..."
 
           SERVER_HOST="${{ secrets.SERVER_HOST }}"
           SERVER_USER="${{ secrets.SERVER_USER }}"
-          DEPLOY_PATH="${{ secrets.DEPLOY_PATH }}"
 
           INIT_CMD='export NVM_DIR="/home/devops/.nvm" && [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh" && nvm use 24.13.0'
 
-          # Проверяем статус
-          echo "📊 PM2 Status:"
+          # Проверяем статус всех ботов
+          echo "📊 PM2 Status (all bots):"
           ssh -o StrictHostKeyChecking=no $SERVER_USER@$SERVER_HOST \
-            "$INIT_CMD && pm2 status fate-bot"
+            "$INIT_CMD && pm2 status"
+
+          echo ""
+          echo "📋 Production bot details:"
+          ssh -o StrictHostKeyChecking=no $SERVER_USER@$SERVER_HOST \
+            "$INIT_CMD && pm2 show fate-bot-production"
+
+          echo ""
+          echo "📜 Production bot logs (last 5 lines):"
+          ssh -o StrictHostKeyChecking=no $SERVER_USER@$SERVER_HOST \
+            "$INIT_CMD && pm2 logs fate-bot-production --lines 5 --nostream"
