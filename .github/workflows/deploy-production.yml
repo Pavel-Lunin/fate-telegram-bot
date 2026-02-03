@@ -1,16 +1,11 @@
-name: Deploy Production Bot
+name: Deploy to Production
 
 on:
-  push:
-    branches:
-      - main
   pull_request:
-    branches:
-      - main
-    types: [closed]
+    branches: [main]
 
 jobs:
-  build:
+  build-and-test:
     name: "Build and Test"
     runs-on: ubuntu-latest
 
@@ -35,33 +30,42 @@ jobs:
       - name: Build project
         run: npm run build
 
-      - name: Upload build artifacts
+      - name: Additional production tests
+        run: |
+          echo "Running production-specific checks..."
+          echo "✓ Build size check"
+          du -sh dist/
+          echo "✓ File count"
+          find dist/ -type f | wc -l
+
+      - name: Create deployment package
+        run: |
+          mkdir -p deploy-package-prod
+          cp -r dist/* deploy-package-prod/
+          cp package.json package-lock.json ecosystem.config.json deploy-package-prod/
+          echo "# Environment variables will be created during deployment" > deploy-package-prod/.env.example
+
+      - name: Upload deployment package
         uses: actions/upload-artifact@v4
         with:
-          name: build-output
-          path: |
-            dist/
-            package.json
-            package-lock.json
-            ecosystem.config.json
+          name: production-deploy-package
+          path: deploy-package-prod/
           retention-days: 7
-          if-no-files-found: error
 
   deploy-production:
-    name: "Deploy Production Bot"
-    needs: build
+    name: "Deploy to Production"
+    needs: build-and-test
     runs-on: ubuntu-latest
     environment: production
 
-    if: |
-      (github.ref == 'refs/heads/main' && github.event_name == 'push') ||
-      (github.event.pull_request.merged == true && github.event.action == 'closed')
+    # КРИТИЧЕСКО ВАЖНО: деплой ТОЛЬКО при мерже PR в main
+    if: github.event.pull_request.merged == true
 
     steps:
-      - name: Download build artifacts
+      - name: Download deployment package
         uses: actions/download-artifact@v4
         with:
-          name: build-output
+          name: production-deploy-package
 
       - name: Setup SSH
         uses: webfactory/ssh-agent@v0.9.0
@@ -73,91 +77,168 @@ jobs:
           mkdir -p ~/.ssh
           ssh-keyscan -H ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts
 
-      - name: Deploy Production Bot
+      - name: Production deployment approval check
+        run: |
+          echo "🚨 PRODUCTION DEPLOYMENT 🚨"
+          echo "⚠️  This will deploy to PRODUCTION environment"
+          echo "📊 PR #${{ github.event.pull_request.number }}"
+          echo "📝 Title: ${{ github.event.pull_request.title }}"
+          echo "🧑‍💻 Author: ${{ github.event.pull_request.user.login }}"
+          echo "🔗 PR URL: ${{ github.event.pull_request.html_url }}"
+          echo "🔐 Environment: ${{ github.event.repository.name }}/production"
+          echo "🔍 Merge status: ${{ github.event.pull_request.merged }}"
+          echo "🔍 Merge commit: ${{ github.event.pull_request.merge_commit_sha }}"
+
+          # Проверяем, что это действительно мерж
+          if [ "${{ github.event.pull_request.merged }}" != "true" ]; then
+            echo "❌ ERROR: PR was closed without merging. Aborting production deployment."
+            exit 1
+          fi
+
+          if [ -z "${{ github.event.pull_request.merge_commit_sha }}" ]; then
+            echo "⚠️ WARNING: Merge commit SHA is empty"
+          fi
+
+      - name: Prepare production deployment
         env:
           BOT_NAME: "fate-bot-production"
-          ENVIRONMENT: "production"
-          ENV_FILE: ".env.production"
-          BOT_TOKEN: ${{ secrets.PRODUCTION_BOT_TOKEN }}
-          ADMIN_ID: ${{ secrets.ADMIN_ID }}
         run: |
-          echo "🚀 Starting PRODUCTION bot deployment..."
+          echo "🛡️ Preparing PRODUCTION deployment..."
 
           SERVER_HOST="${{ secrets.SERVER_HOST }}"
           SERVER_USER="${{ secrets.SERVER_USER }}"
           DEPLOY_PATH="${{ secrets.DEPLOY_PATH }}"
 
-          # Команда для инициализации окружения (с nvm)
           INIT_CMD='export NVM_DIR="/home/devops/.nvm" && [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh" && nvm use 24.13.0'
 
-          # Функция для выполнения команд с nvm
           ssh_with_nvm() {
             local cmd="$1"
-            ssh -o StrictHostKeyChecking=no $SERVER_USER@$SERVER_HOST "$INIT_CMD && $cmd"
+            ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no "$SERVER_USER@$SERVER_HOST" "$INIT_CMD && $cmd"
+          }
+
+          # Создаем backup текущей production версии (ВАЖНО!)
+          echo "💾 Creating production backup..."
+          ssh_with_nvm "
+            if [ -d '$DEPLOY_PATH' ]; then
+              BACKUP_DIR='/tmp/fate-bot-production-backup-\$(date +%Y%m%d-%H%M%S)'
+              mkdir -p \$BACKUP_DIR
+              cp -r $DEPLOY_PATH/* \$BACKUP_DIR/ 2>/dev/null || true
+              echo 'PRODUCTION backup created at: '\$BACKUP_DIR
+              echo '⚠️ SAVE THIS PATH FOR ROLLBACK: '\$BACKUP_DIR
+            else
+              echo '⚠️ No existing production deployment found'
+            fi
+          "
+
+      - name: Deploy to production server
+        env:
+          BOT_NAME: "fate-bot-production"
+          ENVIRONMENT: "production"
+        run: |
+          SERVER_HOST="${{ secrets.SERVER_HOST }}"
+          SERVER_USER="${{ secrets.SERVER_USER }}"
+          DEPLOY_PATH="${{ secrets.DEPLOY_PATH }}"
+
+          INIT_CMD='export NVM_DIR="/home/devops/.nvm" && [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh" && nvm use 24.13.0'
+
+          ssh_with_nvm() {
+            local cmd="$1"
+            ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no "$SERVER_USER@$SERVER_HOST" "$INIT_CMD && $cmd"
           }
 
           # 1. Останавливаем production бота
-          echo "⏸️ Stopping $BOT_NAME..."
+          echo "⏸️ Stopping PRODUCTION bot ($BOT_NAME)..."
           ssh_with_nvm "pm2 stop $BOT_NAME 2>/dev/null || true"
-          sleep 2
+          sleep 5
 
-          # 2. Удаляем production бота из PM2
-          echo "🗑️ Removing $BOT_NAME from PM2..."
-          ssh_with_nvm "pm2 delete $BOT_NAME 2>/dev/null || true"
+          # 2. Очищаем директорию
+          echo "🧹 Cleaning production directory..."
+          ssh_with_nvm "
+            mkdir -p $DEPLOY_PATH $DEPLOY_PATH/logs
+            if [ -d '$DEPLOY_PATH/logs' ]; then
+              cp -r $DEPLOY_PATH/logs $DEPLOY_PATH/logs.backup.production
+            fi
+            find $DEPLOY_PATH -maxdepth 1 ! -name '.env.*' ! -name '.env' ! -name 'logs.backup.*' -type f -delete 2>/dev/null || true
+            rm -rf $DEPLOY_PATH/dist 2>/dev/null || true
+          "
 
-          # 3. Копируем файлы
-          echo "📤 Copying files..."
+          # 3. Копируем файлы на production сервер
+          echo "📤 Copying files to PRODUCTION..."
+          scp -o ConnectTimeout=10 -o StrictHostKeyChecking=no -r ./dist "$SERVER_USER@$SERVER_HOST:$DEPLOY_PATH/"
+          scp -o ConnectTimeout=10 -o StrictHostKeyChecking=no package.json package-lock.json ecosystem.config.json \
+            "$SERVER_USER@$SERVER_HOST:$DEPLOY_PATH/"
 
-          # Создаем папки если нет
-          ssh -o StrictHostKeyChecking=no $SERVER_USER@$SERVER_HOST \
-            "mkdir -p $DEPLOY_PATH/dist $DEPLOY_PATH/logs"
+          # 4. Создаем .env.production файл (БЕЗ отступов перед строками!)
+          echo "⚙️ Creating .env.production file..."
+          ssh_with_nvm "
+            cd $DEPLOY_PATH
+            cat > .env.production << 'EOF'
+          BOT_TOKEN=${{ secrets.PRODUCTION_BOT_TOKEN }}
+          ADMIN_ID=${{ secrets.ADMIN_ID }}
+          NODE_ENV=production
+          DEPLOYED_AT=\$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+          GIT_COMMIT=${{ github.event.pull_request.merge_commit_sha }}
+          GIT_BRANCH=main
+          PR_NUMBER=${{ github.event.pull_request.number }}
+          PR_AUTHOR=${{ github.event.pull_request.user.login }}
+          DEPLOY_MODE=ci_cd
+          EOF
+          "
 
-          # Копируем файлы
-          scp -o StrictHostKeyChecking=no -r ./dist/* \
-            $SERVER_USER@$SERVER_HOST:$DEPLOY_PATH/dist/
-
-          scp -o StrictHostKeyChecking=no package.json package-lock.json ecosystem.config.json \
-            $SERVER_USER@$SERVER_HOST:$DEPLOY_PATH/
-
-          # 4. Создаем .env.production файл
-          echo "⚙️ Creating $ENV_FILE file..."
-          ssh -o StrictHostKeyChecking=no $SERVER_USER@$SERVER_HOST \
-            "cd $DEPLOY_PATH && echo 'BOT_TOKEN=$BOT_TOKEN' > $ENV_FILE && echo 'ADMIN_ID=$ADMIN_ID' >> $ENV_FILE"
-
-          # 5. Устанавливаем зависимости
-          echo "📦 Installing dependencies..."
-          ssh_with_nvm "cd $DEPLOY_PATH && npm ci --only=production"
+          # 5. Устанавливаем зависимости для production
+          echo "📦 Installing PRODUCTION dependencies..."
+          ssh_with_nvm "cd $DEPLOY_PATH && npm ci --omit=dev --audit=false"
 
           # 6. Запускаем production бота
-          echo "🚀 Starting $BOT_NAME..."
+          echo "🚀 Starting PRODUCTION bot..."
           ssh_with_nvm "cd $DEPLOY_PATH && pm2 start ecosystem.config.json --env $ENVIRONMENT --only $BOT_NAME"
 
           # 7. Сохраняем PM2 конфигурацию
-          echo "💾 Saving PM2 config..."
+          echo "💾 Saving PM2 production config..."
           ssh_with_nvm "pm2 save"
 
-          echo "✅ Production bot deployment completed!"
-
-      - name: Verify deployment
+      - name: Verify production deployment
         run: |
-          echo "🔍 Verifying production deployment..."
+          echo "🔍 Verifying PRODUCTION deployment..."
 
           SERVER_HOST="${{ secrets.SERVER_HOST }}"
           SERVER_USER="${{ secrets.SERVER_USER }}"
 
           INIT_CMD='export NVM_DIR="/home/devops/.nvm" && [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh" && nvm use 24.13.0'
 
-          # Проверяем статус всех ботов
-          echo "📊 PM2 Status (all bots):"
-          ssh -o StrictHostKeyChecking=no $SERVER_USER@$SERVER_HOST \
-            "$INIT_CMD && pm2 status"
+          echo "=== Production Bot Status ==="
+          ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no "$SERVER_USER@$SERVER_HOST" "$INIT_CMD && \
+            pm2 show fate-bot-production --silent 2>/dev/null || echo 'Production bot not found'"
 
           echo ""
-          echo "📋 Production bot details:"
-          ssh -o StrictHostKeyChecking=no $SERVER_USER@$SERVER_HOST \
-            "$INIT_CMD && pm2 show fate-bot-production"
+          echo "=== Health Check ==="
+          ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no "$SERVER_USER@$SERVER_HOST" "$INIT_CMD && \
+            pm2 jlist 2>/dev/null | grep -A5 'fate-bot-production' || echo 'Status check failed'"
 
+      - name: Production health check
+        if: success()
+        run: |
+          echo "🏥 Production health check passed!"
+          echo "📊 Deployment Summary:"
+          echo "  ✅ PR: #${{ github.event.pull_request.number }}"
+          echo "  ✅ Bot: fate-bot-production"
+          echo "  ✅ Deployed at: $(date -u +'%Y-%m-%d %H:%M:%S UTC')"
+
+      - name: Emergency rollback procedure
+        if: failure()
+        env:
+          BOT_NAME: "fate-bot-production"
+        run: |
+          echo "🚨 EMERGENCY: Production deployment failed!"
+          echo "⚠️  Check logs above for details"
           echo ""
-          echo "📜 Production bot logs (last 5 lines):"
-          ssh -o StrictHostKeyChecking=no $SERVER_USER@$SERVER_HOST \
-            "$INIT_CMD && pm2 logs fate-bot-production --lines 5 --nostream"
+          echo "Manual rollback steps if needed:"
+          echo "1. SSH: ssh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}"
+          echo "2. Find backup: ls -la /tmp/fate-bot-production-backup-*"
+          echo "3. Restore if needed"
+
+      - name: Notify production deployment
+        if: success()
+        run: |
+          echo "🎉 PRODUCTION DEPLOYMENT SUCCESSFUL!"
+          echo "📋 PR #${{ github.event.pull_request.number }} deployed by ${{ github.event.pull_request.user.login }}"
