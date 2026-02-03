@@ -1,6 +1,8 @@
 import { Telegraf, Context } from "telegraf";
 import { message } from "telegraf/filters";
 import * as dotenv from "dotenv";
+import * as fs from "fs";
+import * as path from "path";
 import {
   CONFIG,
   DENIS_COMPLIMENTS,
@@ -25,13 +27,44 @@ import {
   BOT_SKILLS_RESPONSES,
 } from "./constants.js";
 
-// Загружаем .env
-dotenv.config();
+// === ЗАГРУЖАЕМ ПРАВИЛЬНЫЙ .env ФАЙЛ ===
+const env = process.env.NODE_ENV || "development";
+let envFile = ".env";
+
+if (env === "staging") {
+  envFile = ".env.staging";
+} else if (env === "production") {
+  envFile = ".env.production";
+}
+
+// Проверяем существование файла
+const envPath = path.resolve(process.cwd(), envFile);
+if (!fs.existsSync(envPath)) {
+  // Fallback на обычный .env
+  const defaultEnvPath = path.resolve(process.cwd(), ".env");
+  if (fs.existsSync(defaultEnvPath)) {
+    envFile = ".env";
+    console.log(`⚠️  Файл ${envFile} не найден, использую .env`);
+  } else {
+    console.error(`❌ Не найден файл окружения: ${envFile} или .env`);
+    console.log("📁 Доступные .env файлы:");
+    fs.readdirSync(process.cwd()).forEach((file) => {
+      if (file.includes(".env")) {
+        console.log(`  - ${file}`);
+      }
+    });
+    process.exit(1);
+  }
+}
+
+// Загружаем переменные из правильного файла
+dotenv.config({ path: path.resolve(process.cwd(), envFile) });
+console.log(`✅ Используется файл: ${envFile} (окружение: ${env})`);
 
 const token = process.env.BOT_TOKEN;
 
 if (!token) {
-  console.error("❌ BOT_TOKEN не найден в .env файле");
+  console.error(`❌ BOT_TOKEN не найден в файле ${envFile}`);
   process.exit(1);
 }
 
